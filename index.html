@@ -114,11 +114,8 @@
   
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
-    import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
 
     let camera, scene, renderer;
-    let controller;
     let poseModel = null;
     let currentPose = null;
     let timerInterval = null;
@@ -162,7 +159,6 @@
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
               const sessionInit = { 
-                requiredFeatures: ['hit-test'],
                 optionalFeatures: ['dom-overlay'], 
                 domOverlay: { root: document.body } 
               };
@@ -352,7 +348,7 @@
           break;
       }
       
-      // Position the model in front of the camera
+      // Position the model in a fixed position in front of the user
       poseModel.position.set(0, -0.5, -1.5);
       scene.add(poseModel);
       
@@ -404,7 +400,7 @@
     }
 
     function render(timestamp, frame) {
-      if (frame && poseModel) {
+      if (poseModel) {
         // Make the model gently rotate to draw attention
         poseModel.rotation.y += 0.005;
       }
