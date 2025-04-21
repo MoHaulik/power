@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebXR AR Power Poses</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #overlay {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 1;
+    }
+    #start-button {
+      padding: 12px 24px;
+      font-size: 18px;
+      background: rgba(72, 118, 255, 0.8);
+      color: white;
+      border: none;
+      border-radius: 30px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    #start-button:hover {
+      background: rgba(72, 118, 255, 1);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+    }
+    #status {
+      margin-top: 15px;
+      font-size: 16px;
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      padding: 10px 15px;
+      border-radius: 12px;
+      display: none;
+      backdrop-filter: blur(5px);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    #pose-controls {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      z-index: 2;
+      display: none;
+    }
+    .pose-button {
+      padding: 10px 15px;
+      background: rgba(72, 118, 255, 0.8);
+      color: white;
+      border: none;
+      border-radius: 20px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .pose-button.active {
+      background: rgba(0, 255, 0, 0.8);
+    }
+    #timer {
+      position: absolute;
+      top: 80px;
+      left: 20px;
+      font-size: 24px;
+      color: white;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px 15px;
+      border-radius: 12px;
+      display: none;
+    }
+    #pose-instructions {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 20px;
+      border-radius: 15px;
+      max-width: 80%;
+      text-align: center;
+      font-size: 18px;
+      display: none;
+      z-index: 3;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <button id="start-button">Start AR Power Poses</button>
+    <div id="status"></div>
+  </div>
+  
+  <div id="timer">60</div>
+  
+  <div id="pose-instructions"></div>
+  
+  <div id="pose-controls">
+    <button class="pose-button" id="pose-wonder">Wonder Woman</button>
+    <button class="pose-button" id="pose-victory">Victory</button>
+    <button class="pose-button" id="pose-ceo">Standing CEO</button>
+    <button class="pose-button" id="pose-eagle">Eagle</button>
+  </div>
+  
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
+    import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
+
+    let camera, scene, renderer;
+    let controller;
+    let poseModel = null;
+    let currentPose = null;
+    let timerInterval = null;
+    let secondsLeft = 60;
+    
+    // Pose descriptions for instructions
+    const poseDescriptions = {
+      wonder: "Stand tall with feet shoulder-width apart, hands on your hips, elbows out, and chin slightly raised.",
+      victory: "Raise both arms overhead in a wide 'V' shape, feet apart, and face lifted as if celebrating a win.",
+      ceo: "Place your hands behind your head with elbows wide, stand with feet apart, and keep your chest open.",
+      eagle: "Clasp your hands behind your back, draw your shoulders back, lift your chest, and look forward with calm confidence."
+    };
+    
+    init();
+
+    function init() {
+      // Scene setup
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+      // Renderer setup
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      renderer.setClearColor(0x000000, 0);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0x404040, 2);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+      directionalLight.position.set(1, 1, 1);
+      directionalLight.castShadow = true;
+      scene.add(directionalLight);
+
+      // Start button event
+      document.getElementById('start-button').addEventListener('click', () => {
+        if (navigator.xr) {
+          navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            if (supported) {
+              const sessionInit = { 
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'], 
+                domOverlay: { root: document.body } 
+              };
+              navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
+            } else {
+              updateStatus('WebXR AR session is not supported on this device.');
+            }
+          });
+        } else {
+          updateStatus('WebXR is not supported in this browser.');
+        }
+      });
+
+      // Handle window resize
+      window.addEventListener('resize', onWindowResize);
+      
+      // Set up pose buttons
+      document.getElementById('pose-wonder').addEventListener('click', () => changePose('wonder'));
+      document.getElementById('pose-victory').addEventListener('click', () => changePose('victory'));
+      document.getElementById('pose-ceo').addEventListener('click', () => changePose('ceo'));
+      document.getElementById('pose-eagle').addEventListener('click', () => changePose('eagle'));
+    }
+
+    function updateStatus(message) {
+      const statusElement = document.getElementById('status');
+      statusElement.style.display = 'block';
+      statusElement.textContent = message;
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onSessionStarted(session) {
+      // Set up XR session
+      renderer.xr.setReferenceSpaceType('local');
+      renderer.xr.setSession(session);
+      
+      // Hide button and show status
+      document.getElementById('start-button').style.display = 'none';
+      updateStatus('AR session started. Choose a power pose below.');
+      
+      // Show pose controls
+      document.getElementById('pose-controls').style.display = 'flex';
+      
+      // Create initial pose model
+      createPoseModel('wonder');
+      
+      // Start animation loop
+      renderer.setAnimationLoop(render);
+
+      // Handle session end
+      session.addEventListener('end', onSessionEnd);
+    }
+
+    function onSessionEnd() {
+      updateStatus('AR session ended');
+      document.getElementById('start-button').style.display = 'block';
+      document.getElementById('pose-controls').style.display = 'none';
+      document.getElementById('timer').style.display = 'none';
+      document.getElementById('pose-instructions').style.display = 'none';
+      
+      // Clear timer if active
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+    
+    function createPoseModel(pose) {
+      if (poseModel) {
+        scene.remove(poseModel);
+      }
+      
+      // Create a simple human silhouette for the selected pose
+      const material = new THREE.MeshStandardMaterial({
+        color: 0x4876FF,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide
+      });
+      
+      poseModel = new THREE.Group();
+      
+      // Create different geometries based on the pose
+      switch (pose) {
+        case 'wonder':
+          // Wonder Woman pose - simple silhouette
+          const wonderTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.5, 8), material);
+          wonderTorso.position.y = 0;
+          
+          const wonderHead = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), material);
+          wonderHead.position.y = 0.35;
+          
+          const wonderLeftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8), material);
+          wonderLeftArm.position.set(-0.25, 0.1, 0);
+          wonderLeftArm.rotation.z = Math.PI / 2;
+          
+          const wonderRightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8), material);
+          wonderRightArm.position.set(0.25, 0.1, 0);
+          wonderRightArm.rotation.z = -Math.PI / 2;
+          
+          const wonderLeftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          wonderLeftLeg.position.set(-0.1, -0.55, 0);
+          
+          const wonderRightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          wonderRightLeg.position.set(0.1, -0.55, 0);
+          
+          poseModel.add(wonderTorso, wonderHead, wonderLeftArm, wonderRightArm, wonderLeftLeg, wonderRightLeg);
+          break;
+          
+        case 'victory':
+          // Victory pose - arms raised in V
+          const victoryTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.5, 8), material);
+          victoryTorso.position.y = 0;
+          
+          const victoryHead = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), material);
+          victoryHead.position.y = 0.35;
+          
+          const victoryLeftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 8), material);
+          victoryLeftArm.position.set(-0.2, 0.3, 0);
+          victoryLeftArm.rotation.z = Math.PI / 4;
+          
+          const victoryRightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.4, 8), material);
+          victoryRightArm.position.set(0.2, 0.3, 0);
+          victoryRightArm.rotation.z = -Math.PI / 4;
+          
+          const victoryLeftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          victoryLeftLeg.position.set(-0.1, -0.55, 0);
+          
+          const victoryRightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          victoryRightLeg.position.set(0.1, -0.55, 0);
+          
+          poseModel.add(victoryTorso, victoryHead, victoryLeftArm, victoryRightArm, victoryLeftLeg, victoryRightLeg);
+          break;
+          
+        case 'ceo':
+          // CEO pose - hands behind head
+          const ceoTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.5, 8), material);
+          ceoTorso.position.y = 0;
+          
+          const ceoHead = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), material);
+          ceoHead.position.y = 0.35;
+          
+          const ceoLeftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8), material);
+          ceoLeftArm.position.set(-0.15, 0.25, 0);
+          ceoLeftArm.rotation.z = Math.PI / 2.5;
+          
+          const ceoRightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8), material);
+          ceoRightArm.position.set(0.15, 0.25, 0);
+          ceoRightArm.rotation.z = -Math.PI / 2.5;
+          
+          const ceoLeftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          ceoLeftLeg.position.set(-0.15, -0.55, 0);
+          
+          const ceoRightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          ceoRightLeg.position.set(0.15, -0.55, 0);
+          
+          poseModel.add(ceoTorso, ceoHead, ceoLeftArm, ceoRightArm, ceoLeftLeg, ceoRightLeg);
+          break;
+          
+        case 'eagle':
+          // Eagle pose - hands behind back
+          const eagleTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.13, 0.5, 8), material);
+          eagleTorso.position.y = 0;
+          
+          const eagleHead = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), material);
+          eagleHead.position.y = 0.35;
+          
+          const eagleLeftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8), material);
+          eagleLeftArm.position.set(-0.1, 0, -0.1);
+          eagleLeftArm.rotation.x = Math.PI / 2;
+          
+          const eagleRightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.3, 8), material);
+          eagleRightArm.position.set(0.1, 0, -0.1);
+          eagleRightArm.rotation.x = Math.PI / 2;
+          
+          const eagleLeftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          eagleLeftLeg.position.set(-0.1, -0.55, 0);
+          
+          const eagleRightLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), material);
+          eagleRightLeg.position.set(0.1, -0.55, 0);
+          
+          poseModel.add(eagleTorso, eagleHead, eagleLeftArm, eagleRightArm, eagleLeftLeg, eagleRightLeg);
+          break;
+      }
+      
+      // Position the model in front of the camera
+      poseModel.position.set(0, -0.5, -1.5);
+      scene.add(poseModel);
+      
+      return poseModel;
+    }
+    
+    function changePose(pose) {
+      // Update active button styling
+      document.querySelectorAll('.pose-button').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      document.getElementById(`pose-${pose}`).classList.add('active');
+      
+      // Create model for selected pose
+      createPoseModel(pose);
+      currentPose = pose;
+      
+      // Show instructions
+      const instructionsElement = document.getElementById('pose-instructions');
+      instructionsElement.textContent = poseDescriptions[pose];
+      instructionsElement.style.display = 'block';
+      
+      // Clear existing timer if any
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+      
+      // Set up new timer for 60 seconds
+      secondsLeft = 60;
+      updateTimer();
+      document.getElementById('timer').style.display = 'block';
+      
+      timerInterval = setInterval(() => {
+        secondsLeft--;
+        updateTimer();
+        
+        if (secondsLeft <= 0) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+          
+          // Show completion message
+          updateStatus(`${pose.charAt(0).toUpperCase() + pose.slice(1)} pose complete! Choose another pose or repeat.`);
+        }
+      }, 1000);
+    }
+    
+    function updateTimer() {
+      document.getElementById('timer').textContent = secondsLeft;
+    }
+
+    function render(timestamp, frame) {
+      if (frame && poseModel) {
+        // Make the model gently rotate to draw attention
+        poseModel.rotation.y += 0.005;
+      }
+      
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
